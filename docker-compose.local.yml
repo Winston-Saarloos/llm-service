@@ -1,0 +1,10 @@
+services:
+  llm-service:
+    build: .
+    ports:
+      - "6002:6002"
+    env_file:
+      - .env
+    # Connect to existing Ollama container running on the host
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

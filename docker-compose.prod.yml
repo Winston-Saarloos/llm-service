@@ -1,0 +1,10 @@
+services:
+  llm-service:
+    image: llm-service:main
+    container_name: llm-service
+    restart: unless-stopped
+    ports:
+      - "6002:6002"
+    environment:
+      - OLLAMA_HOST=http://host.docker.internal:11434
+      - SERVER_AUTH_SECRET=${SERVER_AUTH_SECRET}

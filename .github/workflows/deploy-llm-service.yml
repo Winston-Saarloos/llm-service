@@ -1,0 +1,51 @@
+name: Deploy LLM Service
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "services/llm-service/**"
+      - ".github/workflows/deploy-llm-service.yml"
+  workflow_dispatch:
+
+jobs:
+  build-and-deploy:
+    runs-on: self-hosted
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./services/llm-service
+          file: ./services/llm-service/Dockerfile
+          push: false
+          load: true
+          tags: lila-llm-service:main
+          platforms: linux/amd64
+
+      - name: Stop and remove existing container
+
+        run: |
+          docker stop lila-llm-service || true
+          docker rm lila-llm-service || true
+
+      - name: Deploy new container
+
+        run: |
+          cd services/llm-service
+          docker compose -f docker-compose.prod.yml up -d
+
+      - name: Verify deployment
+
+        run: |
+          sleep 5
+          docker ps | grep lila-llm-service
+
+          curl -f http://localhost:6002/healthz
