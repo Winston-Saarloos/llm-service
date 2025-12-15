@@ -40,7 +40,8 @@ jobs:
           docker rm llm-service || true
 
       - name: Deploy new container
-
+        env:
+          SERVER_AUTH_SECRET: ${{ secrets.SERVER_AUTH_SECRET }}
         run: |
           docker compose -f docker-compose.prod.yml up -d
 
