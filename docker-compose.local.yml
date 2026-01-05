@@ -8,3 +8,10 @@ services:
     # Connect to existing Ollama container running on the host
     extra_hosts:
       - "host.docker.internal:host-gateway"
+  embedding-worker:
+    build: .
+    command: ["python", "scripts/embedding_worker.py"]
+    env_file:
+      - .env
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

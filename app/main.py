@@ -3,6 +3,7 @@ import logging
 
 import os
 import httpx
+import jwt
 from fastapi import FastAPI, HTTPException, Request, status
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.exceptions import RequestValidationError
@@ -22,43 +23,96 @@ logger = logging.getLogger(__name__)
 
 OLLAMA_HOST_URL = os.getenv("OLLAMA_HOST", "http://host.docker.internal:11434")
 SERVER_AUTH_SECRET = os.getenv("SERVER_AUTH_SECRET")
+JWT_PUBLIC_KEY = os.getenv("JWT_PUBLIC_KEY")
 
 # -----------------------------------------------------------------------------
 # Authentication Middleware
 # -----------------------------------------------------------------------------
 
 class ServerAuthMiddleware(BaseHTTPMiddleware):
-    """Middleware to verify server authentication header."""
+    """Middleware to verify server authentication via JWT token or server auth header."""
+    
+    def _validate_jwt_token(self, token: str) -> bool:
+        """
+        Validate JWT token and check for 'llm' scope.
+        Returns True if token is valid and has 'llm' scope, False otherwise.
+        """
+        if not JWT_PUBLIC_KEY:
+            logger.debug("JWT_PUBLIC_KEY not configured, skipping JWT validation")
+            return False
+        
+        try:
+            decoded_token = jwt.decode(
+                token,
+                JWT_PUBLIC_KEY,
+                algorithms=["RS256", "ES256", "HS256"],
+                options={"verify_signature": True}
+            )
+            
+            # Check for 'llm' scope in the token
+            scope = decoded_token.get("scope", "")
+            if isinstance(scope, str):
+                scopes = scope.split()
+            elif isinstance(scope, list):
+                scopes = scope
+            else:
+                scopes = []
+            
+            if "llm" in scopes:
+                logger.info(f"JWT token validated successfully with 'llm' scope")
+                return True
+            else:
+                logger.warning(f"JWT token validated but missing 'llm' scope. Found scopes: {scopes}")
+                return False
+                
+        except jwt.ExpiredSignatureError:
+            logger.warning("JWT token has expired")
+            return False
+        except jwt.InvalidTokenError as e:
+            logger.warning(f"Invalid JWT token: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error validating JWT token: {e}")
+            return False
     
     async def dispatch(self, request: Request, call_next):
-        # Log incoming request
         logger.info(f"Incoming {request.method} {request.url.path} from {request.client.host if request.client else 'unknown'}")
         
-        # Skip authentication for health check endpoints
         if request.url.path in ["/health", "/healthz"]:
             return await call_next(request)
         
-        # Require SERVER_AUTH_SECRET to be configured
-        if not SERVER_AUTH_SECRET:
-            logger.error("SERVER_AUTH_SECRET is not configured. All requests will be blocked.")
+        auth_header = request.headers.get("Authorization", "")
+        jwt_valid = False
+        
+        if auth_header.startswith("Bearer "):
+            token = auth_header[7:]
+            jwt_valid = self._validate_jwt_token(token)
+        
+        server_auth_header = request.headers.get("X-Server-Auth-Secret")
+        server_auth_valid = False
+        
+        if SERVER_AUTH_SECRET and server_auth_header == SERVER_AUTH_SECRET:
+            server_auth_valid = True
+        
+        if jwt_valid or server_auth_valid:
+            auth_method = "JWT token" if jwt_valid else "X-Server-Auth-Secret header"
+            logger.info(f"Request authenticated via {auth_method}")
+            response = await call_next(request)
+            logger.info(f"Response {response.status_code} for {request.method} {request.url.path}")
+            return response
+        
+        if not JWT_PUBLIC_KEY and not SERVER_AUTH_SECRET:
+            logger.error("Neither JWT_PUBLIC_KEY nor SERVER_AUTH_SECRET is configured. All requests will be blocked.")
             return JSONResponse(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 content={"detail": "Server authentication not configured"}
             )
         
-        # Check for authentication header
-        auth_header = request.headers.get("X-Server-Auth-Secret")
-        
-        if not auth_header or auth_header != SERVER_AUTH_SECRET:
-            logger.error(f"Unauthorized request: Missing or invalid X-Server-Auth-Secret header from {request.client.host if request.client else 'unknown'}")
-            return JSONResponse(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                content={"detail": "Unauthorized: Missing or invalid X-Server-Auth-Secret header"}
-            )
-        
-        response = await call_next(request)
-        logger.info(f"Response {response.status_code} for {request.method} {request.url.path}")
-        return response
+        logger.error(f"Unauthorized request: Missing or invalid authentication from {request.client.host if request.client else 'unknown'}")
+        return JSONResponse(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            content={"detail": "Unauthorized: Missing or invalid authentication. Provide either a valid JWT token with 'llm' scope in Authorization header or a valid X-Server-Auth-Secret header"}
+        )
 
 
 # -----------------------------------------------------------------------------
