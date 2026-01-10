@@ -13,5 +13,9 @@ services:
     command: ["python", "scripts/embedding_worker.py"]
     env_file:
       - .env
+    environment:
+      - LLM_SERVICE_URL=${LLM_SERVICE_URL:-http://llm-service:6002}
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    depends_on:
+      - llm-service

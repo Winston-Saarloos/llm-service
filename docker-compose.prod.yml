@@ -14,7 +14,7 @@ services:
     restart: unless-stopped
     command: ["python", "scripts/embedding_worker.py"]
     environment:
-      - OLLAMA_HOST=http://host.docker.internal:11434
+      - LLM_SERVICE_URL=${LLM_SERVICE_URL:-http://llm-service:6002}
       - SERVER_AUTH_SECRET=${SERVER_AUTH_SECRET}
       - REDIS_URL=${REDIS_URL}
       - MEMORY_SERVICE_URL=${MEMORY_SERVICE_URL}
@@ -22,3 +22,5 @@ services:
       - EMBEDDING_MODEL=mxbai-embed-large:335m
       - EMBEDDING_CHUNK_TOKENS=350
       - EMBEDDING_CHUNK_OVERLAP_TOKENS=60
+    depends_on:
+      - llm-service

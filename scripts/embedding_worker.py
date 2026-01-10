@@ -1,4 +1,4 @@
-"""Embedding worker for Redis stream jobs using Ollama (GPU host)."""
+"""Embedding worker for Redis stream jobs using LLM service API (GPU host)."""
 import json
 import os
 import socket
@@ -54,7 +54,8 @@ def main() -> int:
     memory_service_url = env("MEMORY_SERVICE_URL", "http://localhost:8000")
     memory_service_secret = env("MEMORY_SERVICE_SECRET")
     api_prefix = env("MEMORY_SERVICE_API_PREFIX", "/v1")
-    ollama_url = env("OLLAMA_HOST", "http://localhost:11434")
+    llm_service_url = env("LLM_SERVICE_URL", "http://localhost:6002")
+    llm_service_auth_secret = env("LLM_SERVICE_AUTH_SECRET", env("SERVER_AUTH_SECRET", ""))
     stream_name = env("EMBEDDING_JOBS_STREAM_NAME", "embedding_jobs")
     default_model = env("EMBEDDING_MODEL", env("EMBEDDING_MODEL_DEFAULT", "embeddinggemma:latest"))
     chunk_tokens = int(env("EMBEDDING_CHUNK_TOKENS", "350"))
@@ -83,13 +84,16 @@ def main() -> int:
         return 1
 
     headers = {"Content-Type": "application/json", "X-Service-Secret": memory_service_secret}
+    llm_headers = {"Content-Type": "application/json"}
+    if llm_service_auth_secret:
+        llm_headers["X-Server-Auth-Secret"] = llm_service_auth_secret
     log(
         "Embedding worker online. "
         f"stream={stream_name} model={default_model} chunk_tokens={chunk_tokens} overlap={chunk_overlap}"
     )
     log(
         "Endpoints: "
-        f"redis={redis_url} memory_service={memory_service_url} ollama={ollama_url}"
+        f"redis={redis_url} memory_service={memory_service_url} llm_service={llm_service_url}"
     )
 
     while True:
@@ -204,13 +208,13 @@ def main() -> int:
 
                             embedding_resp = http_json(
                                 "POST",
-                                f"{ollama_url}/api/embeddings",
+                                f"{llm_service_url}/v1/embeddings",
                                 {"model": embedding_model, "prompt": chunk_text_value},
-                                {"Content-Type": "application/json"},
+                                llm_headers,
                             )
                             embedding = embedding_resp.get("embedding")
                             if not embedding:
-                                raise RuntimeError("No embedding returned from Ollama")
+                                raise RuntimeError("No embedding returned from LLM service")
 
                             log(
                                 f"Upserting embedding for chunk item_id={chunk_item_id} dims={len(embedding)}"
@@ -248,13 +252,13 @@ def main() -> int:
                         log(f"Chunked embeddings complete item_id={item_id}")
                     else:
                         log(f"Embedding single item_id={item_id}")
-                        embedding_url = f"{ollama_url}/api/embeddings"
+                        embedding_url = f"{llm_service_url}/v1/embeddings"
                         last_url = embedding_url
                         embedding_resp = http_json(
                             "POST",
                             embedding_url,
                             {"model": embedding_model, "prompt": content},
-                            {"Content-Type": "application/json"},
+                            llm_headers,
                         )
                         embedding = embedding_resp.get("embedding")
                         if not embedding:

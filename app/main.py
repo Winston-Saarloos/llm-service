@@ -431,3 +431,55 @@ async def create_chat_completion_stream(
                     yield (response_line + "\n").encode("utf-8")
 
     return StreamingResponse(stream_from_ollama(), media_type="application/x-ndjson")
+
+
+class EmbeddingRequest(BaseModel):
+    model: str
+    prompt: str
+
+
+class EmbeddingResponse(BaseModel):
+    embedding: list[float]
+
+
+@application.post("/v1/embeddings")
+async def create_embedding(embedding_request: EmbeddingRequest) -> EmbeddingResponse:
+    """
+    Generate embeddings for the provided text using the specified model.
+    
+    This endpoint wraps Ollama's /api/embeddings endpoint and provides
+    a consistent API for embedding generation.
+    """
+    logger.info(f"Received embedding request: model={embedding_request.model}")
+    
+    ollama_request_payload = {
+        "model": embedding_request.model,
+        "prompt": embedding_request.prompt,
+    }
+    
+    async with httpx.AsyncClient(timeout=120.0) as http_client:
+        ollama_response = await http_client.post(
+            f"{OLLAMA_HOST_URL}/api/embeddings",
+            json=ollama_request_payload,
+        )
+    
+    if ollama_response.status_code != 200:
+        error_text = ollama_response.text
+        logger.error(f"Ollama API error: status={ollama_response.status_code}, response={error_text}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Ollama error: {error_text}",
+        )
+    
+    ollama_response_json = ollama_response.json()
+    embedding: list[float] = ollama_response_json.get("embedding", [])
+    
+    if not embedding:
+        logger.error("No embedding returned from Ollama")
+        raise HTTPException(
+            status_code=500,
+            detail="No embedding returned from Ollama",
+        )
+    
+    logger.info(f"Generated embedding with {len(embedding)} dimensions")
+    return EmbeddingResponse(embedding=embedding)
